@@ -1,0 +1,16 @@
+# build artifacts
+third_party/popnet_anytopo/build/
+PyTorchSim/togsim_results/
+**/__pycache__/
+*.o
+*.pyc
+
+# large / generated
+.DS_Store
+
+# PopNet run logs / delay dumps
+popnet.log
+delayInfo.txt
+popnet_exp/logs/*.log
+third_party/popnet_anytopo/popnet.log
+third_party/popnet_anytopo/delayInfo.txt

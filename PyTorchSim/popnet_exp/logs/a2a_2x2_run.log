@@ -1,0 +1,33 @@
+****************configuration********************
+ary size:2
+cube dimension:2
+virtual channel number:3
+buffer size:12
+outbuffer size:12
+flit size:4
+link length:1000
+simulation length:100000
+trace file:/mnt/sdb1/wyf/PyTorchSim/popnet_exp/traces/a2a_2x2/bench
+Routing algorithm:0
+****************configuration********************
+Packet count: 12
+Current time: 1 Incoming packets: 12 Finished packets: 0
+**************************************************
+total finished:       0
+average Delay:        -nan
+total mem power:      3420.35
+total crossbar power: 0
+total arbiter power:  0
+total link power:     0
+total power:          3420.35
+**************************************************
+Current time: 2001 Incoming packets: 12 Finished packets: 12
+**************************************************
+total finished:       12
+average Delay:        781
+total mem power:      4.43187
+total crossbar power: 0.243205
+total arbiter power:  7.70582e-06
+total link power:     0.389243
+total power:          5.06432
+**************************************************
