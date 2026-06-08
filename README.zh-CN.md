@@ -4,12 +4,13 @@
 
 当前阶段（Phase 1）：
 
-- 4 节点、2×2 mesh、固定拓扑
+- 通过 `configs/noi_hbm_reconfigurable.yaml` 支持 NoI/HBM 硬件配置
+- 支持配置 compute-side NoI ports、HBM-side NoI ports、NoI-NI、D2D 和 HBM-side 参数
 - 12 条有向通信（每节点向其余 3 个节点各发 16 KB）
 - 每条流走完整 PyTorchSim：`torch.compile` → Gem5 → Spike → BackendSim/TOGSim
-- CSV trace → PopNet `bench` 格式 → PopNet 周期仿真
+- 带 NoI/HBM metadata 的 CSV trace → PopNet `bench` 格式 → PopNet 周期仿真
 
-尚未包含：可重构 NoI、数据中心 baseline、heatmap、大规模 sweep。
+尚未包含：完整 EIGEN/PIMnet/Torus-A2A+ 调度算法、heatmap、大规模 sweep。
 
 ---
 
@@ -19,16 +20,19 @@
 TopoTraceSim/
 ├── README.md
 ├── README.zh-CN.md           # 中文说明（本文件）
+├── configs/
+│   └── noi_hbm_reconfigurable.yaml # NoI/HBM 硬件配置
 ├── scripts/
 │   ├── run_a2a_full_pipeline.sh    # 一键流水线
 │   ├── pytorchsim_csv_to_popnet.py # CSV → PopNet bench
+│   ├── topotrace_hardware_config.py # NoI/HBM 配置解析
 │   └── （PyTorchSim 驱动见 PyTorchSim/scripts/run_a2a_pytorchsim.py）
 ├── PyTorchSim/                # PyTorchSim 与 A2A 驱动脚本
 ├── third_party/
 │   └── popnet_anytopo/       # PopNet（CMake 编译）
 ├── traces/                   # PyTorchSim 输出的 A2A CSV
 └── popnet_exp/
-    ├── traces/a2a_2x2/       # PopNet bench
+    ├── traces/a2a_n*/        # PopNet bench
     └── logs/                 # PopNet 运行日志
 ```
 
@@ -71,6 +75,14 @@ bash scripts/run_a2a_full_pipeline.sh
 bash scripts/run_a2a_full_pipeline.sh --smoke
 ```
 
+显式指定 NoI/HBM 硬件配置：
+
+```bash
+bash scripts/run_a2a_full_pipeline.sh \
+  --hardware-config configs/noi_hbm_reconfigurable.yaml \
+  --smoke
+```
+
 若 PyTorchSim 已跑完，只做转换 + PopNet：
 
 ```bash
@@ -95,7 +107,39 @@ docker run --rm --ipc=host \
   python scripts/run_a2a_pytorchsim.py
 ```
 
-输出：`traces/a2a_n4_16kb_pytorchsim.csv`
+root pipeline 会写出带硬件标签的 CSV 文件名，例如：
+
+```text
+traces/a2a_n4_16KB_runtimeReconfigurableCrossbar_pytorchsim.csv
+```
+
+如果单独运行 PyTorchSim driver 且不传 `--out`，则仍使用 driver 内部默认输出名。
+
+root pipeline 还会写出：
+
+- `traces/noi_hbm_hardware_metadata.json`：展开后的硬件字段，会附加到 CSV 每一行
+- `traces/noi_hbm_hardware_summary.txt`：便于阅读的 NoI/HBM 配置摘要
+
+### 硬件配置
+
+默认硬件配置为：
+
+```text
+configs/noi_hbm_reconfigurable.yaml
+```
+
+它包含三个顶层部分：
+
+| 部分 | 作用 |
+|------|------|
+| `NoI` | 互连结构类型、compute/HBM 端口、重构粒度、控制延迟、流控 |
+| `NoINI` | compute-side endpoint adapter 数量、注入/弹出 buffer、D2D lane 与 lane rate |
+| `HBMSide` | HBM stack 数量、HBM-side NoI stop、staging buffer、logical channel、HBM bandwidth |
+
+`NoI.interconnectType` 支持：
+
+- `runtimeReconfigurableCrossbar`
+- `fixedInterconnect`
 
 ### 步骤 2 — 转为 PopNet trace
 
@@ -105,15 +149,17 @@ docker run --rm --ipc=host \
 python3 /path/to/TopoTraceSim/scripts/pytorchsim_csv_to_popnet.py
 ```
 
-输出：`popnet_exp/traces/a2a_2x2/bench`（格式：`T sx sy dx dy n`）
+输出路径由 root pipeline 根据硬件配置选择，例如
+`popnet_exp/traces/a2a_n4_runtimeReconfigurableCrossbar/bench`
+（格式：`T sx sy dx dy n`）。
 
-### 步骤 3 — PopNet 2×2 固定 mesh
+### 步骤 3 — PopNet
 
 ```bash
 ./third_party/popnet_anytopo/build/popnet \
   -A 2 -c 2 -V 3 -B 12 -O 12 -F 4 \
   -L 1000 -T 100000 -r 1 \
-  -I "$(pwd)/popnet_exp/traces/a2a_2x2/bench" -R 0
+  -I "$(pwd)/popnet_exp/traces/a2a_n4_runtimeReconfigurableCrossbar/bench" -R 0
 ```
 
 ---

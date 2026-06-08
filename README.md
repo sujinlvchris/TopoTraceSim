@@ -4,12 +4,13 @@
 
 Current scope (Phase 1):
 
-- 4 nodes, 2×2 mesh, fixed topology
+- NoI/HBM hardware configuration through `configs/noi_hbm_reconfigurable.yaml`
+- Configurable compute-side NoI ports, HBM-side NoI ports, NoI-NI, D2D, and HBM-side parameters
 - 12 directed flows (each node sends 16 KB to every other node)
 - Full PyTorchSim stack per flow: `torch.compile` → Gem5 → Spike → BackendSim/TOGSim
-- CSV trace → PopNet `bench` format → PopNet cycle simulation
+- CSV trace with NoI/HBM metadata → PopNet `bench` format → PopNet cycle simulation
 
-Not included yet: reconfigurable NoI, data-center baselines, heatmaps, large sweeps.
+Not included yet: full EIGEN/PIMnet/Torus-A2A+ scheduling algorithms, heatmaps, large sweeps.
 
 ---
 
@@ -19,16 +20,19 @@ Not included yet: reconfigurable NoI, data-center baselines, heatmaps, large swe
 TopoTraceSim/
 ├── README.md                 # English (this file)
 ├── README.zh-CN.md           # Chinese
+├── configs/
+│   └── noi_hbm_reconfigurable.yaml # NoI/HBM hardware configuration
 ├── scripts/
 │   ├── run_a2a_full_pipeline.sh    # one-shot pipeline
 │   ├── pytorchsim_csv_to_popnet.py # CSV → PopNet bench
+│   ├── topotrace_hardware_config.py # NoI/HBM config loader
 │   └── (see PyTorchSim/scripts/run_a2a_pytorchsim.py)
 ├── PyTorchSim/                # PyTorchSim frontend + our A2A driver
 ├── third_party/
 │   └── popnet_anytopo/       # PopNet (build with CMake)
 ├── traces/                   # PyTorchSim A2A CSV output
 └── popnet_exp/
-    ├── traces/a2a_2x2/       # PopNet bench files
+    ├── traces/a2a_n*/        # PopNet bench files
     └── logs/                 # PopNet run logs
 ```
 
@@ -72,6 +76,14 @@ Smoke test (~1 min):
 bash scripts/run_a2a_full_pipeline.sh --smoke
 ```
 
+Run with an explicit NoI/HBM hardware config:
+
+```bash
+bash scripts/run_a2a_full_pipeline.sh \
+  --hardware-config configs/noi_hbm_reconfigurable.yaml \
+  --smoke
+```
+
 If PyTorchSim already finished, only convert + PopNet:
 
 ```bash
@@ -96,7 +108,40 @@ docker run --rm --ipc=host \
   python scripts/run_a2a_pytorchsim.py
 ```
 
-Output: `traces/a2a_n4_16kb_pytorchsim.csv`
+The root pipeline writes a hardware-tagged CSV name, for example:
+
+```text
+traces/a2a_n4_16KB_runtimeReconfigurableCrossbar_pytorchsim.csv
+```
+
+The standalone PyTorchSim driver still uses its internal default if `--out` is
+not provided.
+
+The root pipeline also writes:
+
+- `traces/noi_hbm_hardware_metadata.json` — flattened hardware fields appended to each CSV row
+- `traces/noi_hbm_hardware_summary.txt` — human-readable NoI/HBM summary
+
+### Hardware Configuration
+
+The default hardware configuration is:
+
+```text
+configs/noi_hbm_reconfigurable.yaml
+```
+
+It contains three top-level sections:
+
+| Section | Purpose |
+|---------|---------|
+| `NoI` | Interconnect type, compute/HBM ports, reconfiguration granularity, control latency, flow control |
+| `NoINI` | Compute-side endpoint adapter count, injection/ejection buffers, D2D lanes and lane rate |
+| `HBMSide` | HBM stack count, HBM-side NoI stops, staging buffer, logical channels, HBM bandwidth |
+
+`NoI.interconnectType` accepts:
+
+- `runtimeReconfigurableCrossbar`
+- `fixedInterconnect`
 
 ### Step 2 — Convert to PopNet
 
@@ -106,15 +151,17 @@ Works from **any directory** (absolute defaults):
 python3 /path/to/TopoTraceSim/scripts/pytorchsim_csv_to_popnet.py
 ```
 
-Output: `popnet_exp/traces/a2a_2x2/bench` (format: `T sx sy dx dy n`)
+Output path is selected by the root pipeline from the hardware config, for
+example `popnet_exp/traces/a2a_n4_runtimeReconfigurableCrossbar/bench`
+(format: `T sx sy dx dy n`).
 
-### Step 3 — PopNet 2×2 fixed mesh
+### Step 3 — PopNet
 
 ```bash
 ./third_party/popnet_anytopo/build/popnet \
   -A 2 -c 2 -V 3 -B 12 -O 12 -F 4 \
   -L 1000 -T 100000 -r 1 \
-  -I "$(pwd)/popnet_exp/traces/a2a_2x2/bench" -R 0
+  -I "$(pwd)/popnet_exp/traces/a2a_n4_runtimeReconfigurableCrossbar/bench" -R 0
 ```
 
 ---

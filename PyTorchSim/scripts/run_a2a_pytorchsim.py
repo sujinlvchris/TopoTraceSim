@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from pathlib import Path
@@ -177,6 +178,19 @@ def resolve_config_path(config_arg: str) -> Path | None:
     return None
 
 
+def load_hardware_metadata(metadata_path: str) -> dict:
+    if not metadata_path:
+        return {}
+    path = Path(metadata_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"hardware metadata JSON not found: {path}")
+    with path.open() as f:
+        metadata = json.load(f)
+    if not isinstance(metadata, dict):
+        raise ValueError(f"hardware metadata JSON must contain an object: {path}")
+    return metadata
+
+
 def run_pair(
     torch,
     compiled_matmul,
@@ -216,9 +230,11 @@ def run_a2a_pytorchsim(
     inject_gap: int,
     config_path: Path | None,
     smoke: bool,
+    hardware_metadata: dict | None = None,
 ):
     torch, device, tog_simulator_cls, sim_backend = import_pytorchsim()
     side = matmul_side(msg_size_bytes)
+    hardware_metadata = hardware_metadata or {}
 
     if tog_simulator_cls is not None and config_path is None:
         raise FileNotFoundError(
@@ -236,6 +252,10 @@ def run_a2a_pytorchsim(
     print(f"  sim backend: {sim_backend}")
     print(f"  TOGSimulator session: {tog_simulator_cls is not None}")
     print(f"  matmul shape: ({side}, {side}) x ({side}, {side}) fp32 -> {side * side * 4} bytes")
+    if hardware_metadata:
+        print("Hardware metadata:")
+        for key in sorted(hardware_metadata):
+            print(f"  {key}: {hardware_metadata[key]}")
 
     pairs = [
         (src, dst)
@@ -264,23 +284,23 @@ def run_a2a_pytorchsim(
                 use_launch_model,
             )
             flits = (msg_size_bytes + flit_size - 1) // flit_size
-            rows.append(
-                {
-                    "event_id": event_id,
-                    "collective_id": 0,
-                    "op_type": "A2A",
-                    "src": src,
-                    "dst": dst,
-                    "bytes": msg_size_bytes,
-                    "flits": flits,
-                    "inject_cycle": event_id * inject_gap,
-                    "node_scale": nodes,
-                    "phase_id": 0,
-                    "chunk_id": 0,
-                    "sim_backend": sim_backend,
-                    "pytorchsim_kernel": "aten.matmul",
-                }
-            )
+            row = {
+                "event_id": event_id,
+                "collective_id": 0,
+                "op_type": "A2A",
+                "src": src,
+                "dst": dst,
+                "bytes": msg_size_bytes,
+                "flits": flits,
+                "inject_cycle": event_id * inject_gap,
+                "node_scale": nodes,
+                "phase_id": 0,
+                "chunk_id": 0,
+                "sim_backend": sim_backend,
+                "pytorchsim_kernel": "aten.matmul",
+            }
+            row.update(hardware_metadata)
+            rows.append(row)
             print(f"  [{event_id + 1}/{len(pairs)}] simulated pair src={src} -> dst={dst}")
 
         if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
@@ -330,6 +350,12 @@ def main():
         help="TORCHSIM_LOG_PATH for TOGSim logs (default: <TORCHSIM_DIR>/togsim_results)",
     )
     parser.add_argument(
+        "--hardware-metadata-json",
+        type=str,
+        default="",
+        help="Optional flattened NoI/HBM metadata JSON to append to each CSV row.",
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help="Run only the first src->dst pair for a quick sanity check.",
@@ -345,6 +371,7 @@ def main():
         )
 
     msg_size_bytes = parse_size(args.msg_size)
+    hardware_metadata = load_hardware_metadata(args.hardware_metadata_json)
     config_path = resolve_config_path(args.config)
     if config_path:
         print(f"simulator config: {config_path}")
@@ -358,6 +385,7 @@ def main():
         inject_gap=args.inject_gap,
         config_path=config_path,
         smoke=args.smoke,
+        hardware_metadata=hardware_metadata,
     )
 
     out_path = Path(args.out) if args.out else DEFAULT_TRACE_OUT
