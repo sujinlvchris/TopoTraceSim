@@ -1,0 +1,25 @@
+name: torus_8x8
+dims: 2
+ary: 8
+nodes: 64
+chunks: 2
+
+popnet:
+  V: 3
+  B: 12
+  O: 12
+  F: 4
+  L: 1000
+  T: 8000000
+  r: 1
+  R: 1
+
+timing:
+  pipe_delay: 1.0
+  wire_delay: 0.9
+  slack: 0.10
+
+defaults:
+  msg_size: 16KB
+  flit_size: 64
+  inject_gap: 0
