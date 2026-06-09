@@ -250,7 +250,7 @@ def main() -> None:
     parser.add_argument("--intra-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--load-model", choices=["activity", "destination"], default="activity")
-    parser.add_argument("--router-local-tile", default="1,1")
+    parser.add_argument("--router-local-tile", default="3,3")
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
     parser.add_argument("--unit-label", default="tile activity")
     parser.add_argument("--color-gamma", type=float, default=0.75)
