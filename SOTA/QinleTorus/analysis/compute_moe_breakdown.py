@@ -80,6 +80,13 @@ def events_by_phase(rows: list[dict[str, str]]) -> dict[str, int]:
     return out
 
 
+def max_dim_busy_cycles(metrics: dict[str, Any]) -> float:
+    busy = metrics["metrics"].get("per_dim_busy_cycles", {})
+    if not busy:
+        return 0.0
+    return max(float(value) for value in busy.values())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MoE A2A breakdown")
     parser.add_argument("--csv", required=True)
@@ -117,18 +124,23 @@ def main() -> None:
     hbm_side_wait = 0
 
     if args.noi_wait_source == "average-delay":
-        noi_congestion_wait = float(metrics["popnet"]["average_delay"])
+        network_window_time = float(metrics["popnet"]["average_delay"])
+        network_service_time = network_window_time
+        congestion_time = 0.0
     else:
-        noi_congestion_wait = float(metrics["metrics"]["a2a_latency_cycles"])
-    waiting_time = (
+        network_window_time = float(metrics["metrics"]["a2a_latency_cycles"])
+        network_service_time = max_dim_busy_cycles(metrics)
+        congestion_time = max(0.0, network_window_time - network_service_time)
+
+    communication_time = (
         reconfig_wait
         + injection_wait
-        + noi_congestion_wait
+        + network_service_time
         + hbm_side_wait
         + ejection_wait
         + barrier_wait
     )
-    total_time = compute_time + waiting_time
+    total_time = compute_time + communication_time + congestion_time
 
     breakdown = {
         "experiment": {
@@ -149,29 +161,42 @@ def main() -> None:
             "noi_wait_source": args.noi_wait_source,
         },
         "popnet": metrics["popnet"],
+        "detailed_components_cycles": {
+            "Reconfiguration Control": reconfig_wait,
+            "Injection Transfer": injection_wait,
+            "Network Service": network_service_time,
+            "HBM-Side Transfer": hbm_side_wait,
+            "Ejection Transfer": ejection_wait,
+            "Barrier Control": barrier_wait,
+            "A2A Network Window": network_window_time,
+            "Congestion Extra": congestion_time,
+        },
         "breakdown_cycles": {
             "A2A End-to-End Time": total_time,
             "Compute Time": compute_time,
-            "Waiting Time": waiting_time,
-            "Reconfiguration Wait": reconfig_wait,
-            "Injection Wait": injection_wait,
-            "NoI Congestion Wait": noi_congestion_wait,
-            "HBM-Side Wait": hbm_side_wait,
-            "Ejection Wait": ejection_wait,
-            "Barrier Wait": barrier_wait,
+            "Communication Time": communication_time,
+            "Congestion Time": congestion_time,
         },
         "breakdown_us": {
             key: value / (args.clock_ghz * 1000.0)
             for key, value in {
                 "A2A End-to-End Time": total_time,
                 "Compute Time": compute_time,
-                "Waiting Time": waiting_time,
-                "Reconfiguration Wait": reconfig_wait,
-                "Injection Wait": injection_wait,
-                "NoI Congestion Wait": noi_congestion_wait,
-                "HBM-Side Wait": hbm_side_wait,
-                "Ejection Wait": ejection_wait,
-                "Barrier Wait": barrier_wait,
+                "Communication Time": communication_time,
+                "Congestion Time": congestion_time,
+            }.items()
+        },
+        "detailed_components_us": {
+            key: value / (args.clock_ghz * 1000.0)
+            for key, value in {
+                "Reconfiguration Control": reconfig_wait,
+                "Injection Transfer": injection_wait,
+                "Network Service": network_service_time,
+                "HBM-Side Transfer": hbm_side_wait,
+                "Ejection Transfer": ejection_wait,
+                "Barrier Control": barrier_wait,
+                "A2A Network Window": network_window_time,
+                "Congestion Extra": congestion_time,
             }.items()
         },
     }
@@ -184,13 +209,8 @@ def main() -> None:
     u = breakdown["breakdown_us"]
     print(f"A2A End-to-End Time: {c['A2A End-to-End Time']:.0f} cycles ~= {u['A2A End-to-End Time']:.3f} us")
     print(f"├── Compute Time: {c['Compute Time']:.0f} cycles ~= {u['Compute Time']:.3f} us")
-    print(f"└── Waiting Time: {c['Waiting Time']:.0f} cycles ~= {u['Waiting Time']:.3f} us")
-    print(f"    ├── Reconfiguration Wait: {c['Reconfiguration Wait']:.0f} cycles ~= {u['Reconfiguration Wait']:.3f} us")
-    print(f"    ├── Injection Wait: {c['Injection Wait']:.0f} cycles ~= {u['Injection Wait']:.3f} us")
-    print(f"    ├── NoI Congestion Wait: {c['NoI Congestion Wait']:.0f} cycles ~= {u['NoI Congestion Wait']:.3f} us")
-    print(f"    ├── HBM-Side Wait: {c['HBM-Side Wait']:.0f} cycles ~= {u['HBM-Side Wait']:.3f} us")
-    print(f"    ├── Ejection Wait: {c['Ejection Wait']:.0f} cycles ~= {u['Ejection Wait']:.3f} us")
-    print(f"    └── Barrier Wait: {c['Barrier Wait']:.0f} cycles ~= {u['Barrier Wait']:.3f} us")
+    print(f"├── Communication Time: {c['Communication Time']:.0f} cycles ~= {u['Communication Time']:.3f} us")
+    print(f"└── Congestion Time: {c['Congestion Time']:.0f} cycles ~= {u['Congestion Time']:.3f} us")
     print(f"wrote breakdown -> {out_path}")
 
 
