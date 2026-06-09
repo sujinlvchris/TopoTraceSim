@@ -126,20 +126,18 @@ def main() -> None:
     if args.noi_wait_source == "average-delay":
         network_window_time = float(metrics["popnet"]["average_delay"])
         network_service_time = network_window_time
-        congestion_time = 0.0
     else:
         network_window_time = float(metrics["metrics"]["a2a_latency_cycles"])
         network_service_time = max_dim_busy_cycles(metrics)
-        congestion_time = max(0.0, network_window_time - network_service_time)
 
+    congestion_extra = max(0.0, network_window_time - network_service_time)
     communication_time = (
-        reconfig_wait
-        + injection_wait
+        injection_wait
         + network_service_time
         + hbm_side_wait
         + ejection_wait
-        + barrier_wait
     )
+    congestion_time = reconfig_wait + barrier_wait + congestion_extra
     total_time = compute_time + communication_time + congestion_time
 
     breakdown = {
@@ -169,7 +167,7 @@ def main() -> None:
             "Ejection Transfer": ejection_wait,
             "Barrier Control": barrier_wait,
             "A2A Network Window": network_window_time,
-            "Congestion Extra": congestion_time,
+            "Congestion Extra": congestion_extra,
         },
         "breakdown_cycles": {
             "A2A End-to-End Time": total_time,
@@ -196,7 +194,7 @@ def main() -> None:
                 "Ejection Transfer": ejection_wait,
                 "Barrier Control": barrier_wait,
                 "A2A Network Window": network_window_time,
-                "Congestion Extra": congestion_time,
+                "Congestion Extra": congestion_extra,
             }.items()
         },
     }
