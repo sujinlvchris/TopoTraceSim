@@ -218,7 +218,7 @@ def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize) -> None:
             if value <= 0:
                 continue
             label = f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
-            text_color = "black" if norm(value) > 0.58 else "white"
+            text_color = "black" if norm(value) > 0.38 else "white"
             ax.text(col, row, label, ha="center", va="center", fontsize=7, color=text_color)
 
 
@@ -453,7 +453,7 @@ def main() -> None:
     parser.add_argument("--unit-label", default="tile activity")
     parser.add_argument("--color-gamma", type=float, default=0.75)
     parser.add_argument("--color-scale", choices=["power", "log"], default="log")
-    parser.add_argument("--cmap", default="magma")
+    parser.add_argument("--cmap", default="RdBu_r")
     args = parser.parse_args()
 
     routes = json.loads(Path(args.routes_json).read_text())
