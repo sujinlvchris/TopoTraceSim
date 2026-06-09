@@ -87,6 +87,39 @@ def max_dim_busy_cycles(metrics: dict[str, Any]) -> float:
     return max(float(value) for value in busy.values())
 
 
+def ideal_noi_parallel_links(metrics: dict[str, Any]) -> int:
+    geom = metrics.get("geom", {})
+    dims = int(geom.get("dims", 1))
+    ary = int(geom.get("ary", 1))
+    return max(1, 2 * ary * dims)
+
+
+def max_payload_serial_cycles(rows: list[dict[str, str]]) -> int:
+    return max(int(row["flits_per_chunk"]) for row in rows)
+
+
+def ideal_noi_transfer_cycles(rows: list[dict[str, str]], metrics: dict[str, Any]) -> int:
+    """Lower bound for NoI transfer under perfect link balancing.
+
+    PopNet measures the actual A2A network window after routing, arbitration,
+    queueing, and link conflicts.  For the breakdown we need a communication
+    lower bound that does not already include those conflicts.  We therefore
+    divide the scheduled flit work by the ideal number of simultaneously usable
+    torus links and also keep the largest single-payload serialization bound.
+    The difference between the measured window and this lower bound is charged
+    to congestion.
+    """
+    bench = metrics.get("bench", {})
+    total_flits = int(bench.get("total_flits", 0))
+    if total_flits <= 0:
+        total_flits = sum(int(row["flits_per_chunk"]) for row in rows)
+
+    parallel_links = ideal_noi_parallel_links(metrics)
+    balanced_transfer = math.ceil(total_flits / parallel_links)
+    serialization_floor = max_payload_serial_cycles(rows)
+    return max(balanced_transfer, serialization_floor)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MoE A2A breakdown")
     parser.add_argument("--csv", required=True)
@@ -125,20 +158,20 @@ def main() -> None:
 
     if args.noi_wait_source == "average-delay":
         network_window_time = float(metrics["popnet"]["average_delay"])
-        network_service_time = network_window_time
     else:
         network_window_time = float(metrics["metrics"]["a2a_latency_cycles"])
-        network_service_time = max_dim_busy_cycles(metrics)
 
-    congestion_extra = max(0.0, network_window_time - network_service_time)
-    communication_time = (
+    measured_network_service_time = max_dim_busy_cycles(metrics)
+    ideal_network_time = ideal_noi_transfer_cycles(rows, metrics)
+    congestion_extra = max(0.0, network_window_time - ideal_network_time)
+    ideal_communication_time = (
         injection_wait
-        + network_service_time
+        + ideal_network_time
         + hbm_side_wait
         + ejection_wait
     )
     congestion_time = reconfig_wait + barrier_wait + congestion_extra
-    total_time = compute_time + communication_time + congestion_time
+    total_time = compute_time + ideal_communication_time + congestion_time
 
     breakdown = {
         "experiment": {
@@ -156,23 +189,30 @@ def main() -> None:
             "send_bytes_by_source": send_bytes,
             "recv_bytes_by_destination": recv_bytes,
             "d2d_bytes_per_cycle_per_compute_chiplet": bytes_per_cycle,
+            "ideal_noi_parallel_links": ideal_noi_parallel_links(metrics),
             "noi_wait_source": args.noi_wait_source,
+            "breakdown_definition": (
+                "Ideal Communication Time = injection + ideal NoI transfer lower bound "
+                "+ HBM-side transfer + ejection; Congestion Time = measured A2A "
+                "network window - ideal NoI transfer lower bound + control waits."
+            ),
         },
         "popnet": metrics["popnet"],
         "detailed_components_cycles": {
             "Reconfiguration Control": reconfig_wait,
             "Injection Transfer": injection_wait,
-            "Network Service": network_service_time,
+            "Ideal NoI Transfer": ideal_network_time,
             "HBM-Side Transfer": hbm_side_wait,
             "Ejection Transfer": ejection_wait,
             "Barrier Control": barrier_wait,
             "A2A Network Window": network_window_time,
+            "Measured Network Service": measured_network_service_time,
             "Congestion Extra": congestion_extra,
         },
         "breakdown_cycles": {
             "A2A End-to-End Time": total_time,
             "Compute Time": compute_time,
-            "Communication Time": communication_time,
+            "Ideal Communication Time": ideal_communication_time,
             "Congestion Time": congestion_time,
         },
         "breakdown_us": {
@@ -180,7 +220,7 @@ def main() -> None:
             for key, value in {
                 "A2A End-to-End Time": total_time,
                 "Compute Time": compute_time,
-                "Communication Time": communication_time,
+                "Ideal Communication Time": ideal_communication_time,
                 "Congestion Time": congestion_time,
             }.items()
         },
@@ -189,11 +229,12 @@ def main() -> None:
             for key, value in {
                 "Reconfiguration Control": reconfig_wait,
                 "Injection Transfer": injection_wait,
-                "Network Service": network_service_time,
+                "Ideal NoI Transfer": ideal_network_time,
                 "HBM-Side Transfer": hbm_side_wait,
                 "Ejection Transfer": ejection_wait,
                 "Barrier Control": barrier_wait,
                 "A2A Network Window": network_window_time,
+                "Measured Network Service": measured_network_service_time,
                 "Congestion Extra": congestion_extra,
             }.items()
         },
@@ -207,7 +248,7 @@ def main() -> None:
     u = breakdown["breakdown_us"]
     print(f"A2A End-to-End Time: {c['A2A End-to-End Time']:.0f} cycles ~= {u['A2A End-to-End Time']:.3f} us")
     print(f"├── Compute Time: {c['Compute Time']:.0f} cycles ~= {u['Compute Time']:.3f} us")
-    print(f"├── Communication Time: {c['Communication Time']:.0f} cycles ~= {u['Communication Time']:.3f} us")
+    print(f"├── Ideal Communication Time: {c['Ideal Communication Time']:.0f} cycles ~= {u['Ideal Communication Time']:.3f} us")
     print(f"└── Congestion Time: {c['Congestion Time']:.0f} cycles ~= {u['Congestion Time']:.3f} us")
     print(f"wrote breakdown -> {out_path}")
 
