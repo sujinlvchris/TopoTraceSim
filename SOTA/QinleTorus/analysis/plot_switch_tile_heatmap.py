@@ -157,6 +157,32 @@ def build_activity_matrices_from_token_routes(
     return intra + inter, intra, inter
 
 
+def build_expert_matrix_from_token_routes(
+    routes: dict,
+    chiplet_cols: int,
+    intra_chiplet_weight: float,
+    inter_chiplet_weight: float,
+) -> np.ndarray:
+    nodes = int(routes["nodes"])
+    num_experts = int(routes["num_experts"])
+    experts_per_chiplet = num_experts // nodes
+    chiplet_rows = nodes // chiplet_cols
+    matrix = np.zeros((chiplet_rows, chiplet_cols * experts_per_chiplet), dtype=float)
+
+    for item in routes["token_routes"]:
+        if not item["kept"]:
+            continue
+        dst_chiplet = int(item["dst_chiplet"])
+        expert_id = int(item["expert_id"])
+        local_expert = expert_id % experts_per_chiplet
+        chiplet_row = dst_chiplet // chiplet_cols
+        chiplet_col = dst_chiplet % chiplet_cols
+        weight = intra_chiplet_weight if item["is_intra_chiplet"] else inter_chiplet_weight
+        matrix[chiplet_row, chiplet_col * experts_per_chiplet + local_expert] += weight
+
+    return matrix
+
+
 def draw_chiplet_grid(ax, chiplet_rows: int, chiplet_cols: int, tile_rows: int, tile_cols: int) -> None:
     height = chiplet_rows * tile_rows
     width = chiplet_cols * tile_cols
@@ -195,6 +221,10 @@ def annotate_nonzero(ax, data: np.ndarray) -> None:
             ax.text(col, row, label, ha="center", va="center", fontsize=7, color="black")
 
 
+def fmt_value(value: float) -> str:
+    return f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
+
+
 def panel_norm(data: np.ndarray, gamma: float) -> colors.Normalize:
     positive = data[data > 0]
     if positive.size == 0:
@@ -205,6 +235,153 @@ def panel_norm(data: np.ndarray, gamma: float) -> colors.Normalize:
     if vmax <= vmin:
         return colors.Normalize(vmin=0, vmax=max(1.0, vmax))
     return colors.PowerNorm(gamma=gamma, vmin=vmin, vmax=vmax)
+
+
+def draw_expert_grid(
+    ax,
+    expert_matrix: np.ndarray,
+    chiplet_cols: int,
+    figure_unit: str,
+    color_gamma: float,
+):
+    norm = panel_norm(expert_matrix, color_gamma)
+    im = ax.imshow(expert_matrix, cmap="magma", norm=norm)
+    rows, cols = expert_matrix.shape
+    experts_per_chiplet = cols // chiplet_cols
+
+    ax.set_title("Expert load", fontsize=12)
+    ax.set_xticks(np.arange(cols))
+    ax.set_yticks(np.arange(rows))
+    ax.set_xticklabels([f"slot {idx % experts_per_chiplet}" for idx in range(cols)])
+    ax.set_yticklabels([f"chiplet row {idx}" for idx in range(rows)])
+    ax.set_xlabel("expert slot inside each chiplet")
+    ax.set_xticks(np.arange(-0.5, cols, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, rows, 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.0)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    for x in range(experts_per_chiplet, cols, experts_per_chiplet):
+        ax.axvline(x - 0.5, color="black", linewidth=2.2)
+    if rows > 1:
+        ax.axhline(0.5, color="black", linewidth=2.2)
+
+    expert_id = 0
+    for row in range(rows):
+        for col in range(cols):
+            value = expert_matrix[row, col]
+            text_color = "black" if norm(value) > 0.62 else "white"
+            ax.text(
+                col,
+                row,
+                f"E{expert_id}\n{fmt_value(value)}",
+                ha="center",
+                va="center",
+                fontsize=10,
+                color=text_color,
+            )
+            expert_id += 1
+
+    for chiplet_id in range(rows * chiplet_cols):
+        chiplet_row = chiplet_id // chiplet_cols
+        chiplet_col = chiplet_id % chiplet_cols
+        ax.text(
+            chiplet_col * experts_per_chiplet - 0.42,
+            chiplet_row - 0.38,
+            f"C{chiplet_id}",
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="black",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1.5},
+        )
+
+    cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
+    cbar.set_label(figure_unit, fontsize=8)
+    cbar.ax.tick_params(labelsize=8)
+
+
+def annotate_router_tiles(
+    ax,
+    data: np.ndarray,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+    router_local_tile: tuple[int, int],
+) -> None:
+    for chiplet_id in range(chiplet_rows * chiplet_cols):
+        row, col = router_global_tile(chiplet_id, chiplet_cols, tile_rows, tile_cols, router_local_tile)
+        value = data[row, col]
+        ax.text(
+            col,
+            row,
+            f"R\n{fmt_value(value)}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="white",
+            bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.65, "pad": 1.8},
+        )
+
+
+def draw_activity_grid(
+    ax,
+    data: np.ndarray,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+    router_local_tile: tuple[int, int],
+    figure_unit: str,
+    color_gamma: float,
+) -> None:
+    im = ax.imshow(data, cmap="viridis", norm=panel_norm(data, color_gamma))
+    ax.set_title("Tile path activity", fontsize=12)
+    ax.set_xlabel("global tile col")
+    ax.set_ylabel("global tile row")
+    draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
+    annotate_router_tiles(ax, data, chiplet_rows, chiplet_cols, tile_rows, tile_cols, router_local_tile)
+    cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
+    cbar.set_label(figure_unit, fontsize=8)
+    cbar.ax.tick_params(labelsize=8)
+
+
+def plot_expert_activity(
+    expert_matrix: np.ndarray,
+    activity_matrix: np.ndarray,
+    out_path: Path,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+    router_local_tile: tuple[int, int],
+    figure_title: str,
+    unit_label: str,
+    color_gamma: float,
+) -> None:
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(12.2, 5.2),
+        constrained_layout=True,
+        gridspec_kw={"width_ratios": [0.9, 1.35]},
+    )
+    fig.suptitle(figure_title, fontsize=14)
+    draw_expert_grid(axes[0], expert_matrix, chiplet_cols, unit_label, color_gamma)
+    draw_activity_grid(
+        axes[1],
+        activity_matrix,
+        chiplet_rows,
+        chiplet_cols,
+        tile_rows,
+        tile_cols,
+        router_local_tile,
+        unit_label,
+        color_gamma,
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=240)
+    plt.close(fig)
 
 
 def plot_heatmaps(
@@ -249,6 +426,7 @@ def main() -> None:
     parser.add_argument("--tile-cols", type=int, default=4)
     parser.add_argument("--intra-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
+    parser.add_argument("--layout", choices=["expert-activity", "three-subfig"], default="expert-activity")
     parser.add_argument("--load-model", choices=["activity", "destination"], default="activity")
     parser.add_argument("--router-local-tile", default="3,3")
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
@@ -290,17 +468,41 @@ def main() -> None:
             inter_chiplet_weight=args.inter_chiplet_weight,
         )
 
-    plot_heatmaps(
-        matrices=matrices,
-        out_path=Path(args.out),
-        chiplet_rows=args.chiplet_rows,
-        chiplet_cols=args.chiplet_cols,
-        tile_rows=args.tile_rows,
-        tile_cols=args.tile_cols,
-        figure_title=args.figure_title,
-        unit_label=args.unit_label,
-        color_gamma=args.color_gamma,
-    )
+    expert_matrix = None
+    if "token_routes" in routes:
+        expert_matrix = build_expert_matrix_from_token_routes(
+            routes=routes,
+            chiplet_cols=args.chiplet_cols,
+            intra_chiplet_weight=args.intra_chiplet_weight,
+            inter_chiplet_weight=args.inter_chiplet_weight,
+        )
+
+    if args.layout == "expert-activity" and expert_matrix is not None:
+        plot_expert_activity(
+            expert_matrix=expert_matrix,
+            activity_matrix=matrices[0],
+            out_path=Path(args.out),
+            chiplet_rows=args.chiplet_rows,
+            chiplet_cols=args.chiplet_cols,
+            tile_rows=args.tile_rows,
+            tile_cols=args.tile_cols,
+            router_local_tile=parse_tile(args.router_local_tile),
+            figure_title=args.figure_title,
+            unit_label=args.unit_label,
+            color_gamma=args.color_gamma,
+        )
+    else:
+        plot_heatmaps(
+            matrices=matrices,
+            out_path=Path(args.out),
+            chiplet_rows=args.chiplet_rows,
+            chiplet_cols=args.chiplet_cols,
+            tile_rows=args.tile_rows,
+            tile_cols=args.tile_cols,
+            figure_title=args.figure_title,
+            unit_label=args.unit_label,
+            color_gamma=args.color_gamma,
+        )
 
     if args.matrix_out:
         names = ["total", "intra", "inter"]
@@ -309,6 +511,8 @@ def main() -> None:
             "router_local_tile": args.router_local_tile,
             "intra_chiplet_weight": args.intra_chiplet_weight,
             "inter_chiplet_weight": args.inter_chiplet_weight,
+            "layout": args.layout,
+            "expert_matrix": expert_matrix.tolist() if expert_matrix is not None else None,
             "matrices": {name: matrix.tolist() for name, matrix in zip(names, matrices)},
         }
         Path(args.matrix_out).parent.mkdir(parents=True, exist_ok=True)
