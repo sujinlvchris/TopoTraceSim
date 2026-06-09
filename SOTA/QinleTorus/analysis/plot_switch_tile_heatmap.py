@@ -23,6 +23,8 @@ def build_matrices_from_counts(
     chiplet_cols: int,
     tile_rows: int,
     tile_cols: int,
+    intra_chiplet_weight: float,
+    inter_chiplet_weight: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     counts = routes["kept_counts_by_source_expert"]
     nodes = int(routes["nodes"])
@@ -38,13 +40,14 @@ def build_matrices_from_counts(
         for expert_id, tokens in enumerate(row):
             dst_chiplet = expert_id // experts_per_chiplet
             base_r, base_c = chiplet_origin(dst_chiplet, chiplet_cols, tile_rows, tile_cols)
-            per_tile_tokens = float(tokens) / float(tile_rows * tile_cols)
-
             if src_chiplet == dst_chiplet:
                 target = intra
+                weight = intra_chiplet_weight
             else:
                 target = inter
+                weight = inter_chiplet_weight
 
+            per_tile_tokens = float(tokens) * weight / float(tile_rows * tile_cols)
             target[base_r:base_r + tile_rows, base_c:base_c + tile_cols] += per_tile_tokens
 
     return intra + inter, intra, inter
@@ -56,6 +59,8 @@ def build_matrices_from_token_routes(
     chiplet_cols: int,
     tile_rows: int,
     tile_cols: int,
+    intra_chiplet_weight: float,
+    inter_chiplet_weight: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     height = chiplet_rows * tile_rows
     width = chiplet_cols * tile_cols
@@ -68,9 +73,9 @@ def build_matrices_from_token_routes(
         row = int(item["dst_global_row"])
         col = int(item["dst_global_col"])
         if item["is_intra_chiplet"]:
-            intra[row, col] += 1.0
+            intra[row, col] += intra_chiplet_weight
         else:
-            inter[row, col] += 1.0
+            inter[row, col] += inter_chiplet_weight
 
     return intra + inter, intra, inter
 
@@ -120,12 +125,15 @@ def plot_heatmaps(
     chiplet_cols: int,
     tile_rows: int,
     tile_cols: int,
+    figure_title: str,
+    unit_label: str,
 ) -> None:
-    titles = ["Total routed tokens", "Intra-chiplet tokens", "Inter-chiplet tokens"]
+    titles = ["Total load", "Intra-chiplet load", "Inter-chiplet load"]
     vmax = max(float(matrix.max()) for matrix in matrices)
     vmax = vmax if vmax > 0 else 1.0
 
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 5.0), constrained_layout=True)
+    fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
         im = ax.imshow(data, cmap="YlGnBu", vmin=0, vmax=vmax)
         ax.set_title(title, fontsize=12)
@@ -134,7 +142,7 @@ def plot_heatmaps(
         draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
         annotate_nonzero(ax, data)
 
-    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, label="tokens")
+    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, label=unit_label)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=220)
     plt.close(fig)
@@ -149,6 +157,10 @@ def main() -> None:
     parser.add_argument("--chiplet-cols", type=int, default=2)
     parser.add_argument("--tile-rows", type=int, default=4)
     parser.add_argument("--tile-cols", type=int, default=4)
+    parser.add_argument("--intra-chiplet-weight", type=float, default=1.0)
+    parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
+    parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
+    parser.add_argument("--unit-label", default="tokens")
     args = parser.parse_args()
 
     routes = json.loads(Path(args.routes_json).read_text())
@@ -159,6 +171,8 @@ def main() -> None:
             chiplet_cols=args.chiplet_cols,
             tile_rows=args.tile_rows,
             tile_cols=args.tile_cols,
+            intra_chiplet_weight=args.intra_chiplet_weight,
+            inter_chiplet_weight=args.inter_chiplet_weight,
         )
     else:
         matrices = build_matrices_from_counts(
@@ -167,6 +181,8 @@ def main() -> None:
             chiplet_cols=args.chiplet_cols,
             tile_rows=args.tile_rows,
             tile_cols=args.tile_cols,
+            intra_chiplet_weight=args.intra_chiplet_weight,
+            inter_chiplet_weight=args.inter_chiplet_weight,
         )
 
     plot_heatmaps(
@@ -176,11 +192,17 @@ def main() -> None:
         chiplet_cols=args.chiplet_cols,
         tile_rows=args.tile_rows,
         tile_cols=args.tile_cols,
+        figure_title=args.figure_title,
+        unit_label=args.unit_label,
     )
 
     if args.matrix_out:
         names = ["total", "intra", "inter"]
-        payload = {name: matrix.tolist() for name, matrix in zip(names, matrices)}
+        payload = {
+            "intra_chiplet_weight": args.intra_chiplet_weight,
+            "inter_chiplet_weight": args.inter_chiplet_weight,
+            "matrices": {name: matrix.tolist() for name, matrix in zip(names, matrices)},
+        }
         Path(args.matrix_out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.matrix_out).write_text(json.dumps(payload, indent=2))
 
