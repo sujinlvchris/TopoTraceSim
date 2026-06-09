@@ -24,7 +24,7 @@ from run_switch_moe_layer import (
     cycles_from_new_backend_results,
     import_pytorchsim,
 )
-from run_switch_routed_moe_layer import apply_capacity, dim_order_label, split_tokens
+from run_switch_routed_moe_layer import dim_order_label, split_tokens
 
 
 def torch_load(torch: Any, path: Path) -> Any:
@@ -86,6 +86,33 @@ def build_expert_to_chiplet(num_experts: int, nodes: int, placement: str) -> lis
         min(nodes - 1, (expert_id * nodes) // num_experts)
         for expert_id in range(num_experts)
     ]
+
+
+def apply_switch_capacity_per_source(
+    assignments,
+    nodes: int,
+    tokens_per_source: int,
+    num_experts: int,
+    expert_capacity: int,
+):
+    raw_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
+    kept_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
+    dropped_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
+    kept_by_expert = [0 for _ in range(num_experts)]
+
+    for src in range(nodes):
+        expert_priority = [0 for _ in range(num_experts)]
+        for token_id in range(tokens_per_source):
+            expert_id = int(assignments[src, token_id])
+            raw_counts[src][expert_id] += 1
+            expert_priority[expert_id] += 1
+            if expert_priority[expert_id] <= expert_capacity:
+                kept_counts[src][expert_id] += 1
+                kept_by_expert[expert_id] += 1
+            else:
+                dropped_counts[src][expert_id] += 1
+
+    return raw_counts, kept_counts, dropped_counts, kept_by_expert
 
 
 def build_trace_rows(
@@ -284,7 +311,7 @@ def main() -> None:
         print(f"  source {src}: router_cycles={cycles} top1={torch.bincount(top1, minlength=args.num_experts).tolist()}")
 
     assignments_tensor = torch.stack(assignments, dim=0)
-    raw_counts, kept_counts, dropped_counts, expert_fill = apply_capacity(
+    raw_counts, kept_counts, dropped_counts, kept_by_expert = apply_switch_capacity_per_source(
         assignments_tensor,
         nodes=nodes,
         tokens_per_source=args.tokens_per_source,
@@ -329,13 +356,14 @@ def main() -> None:
         "d_ff": args.d_ff,
         "num_experts": args.num_experts,
         "expert_capacity": args.expert_capacity,
+        "capacity_semantics": "per_source_group",
         "expert_placement": args.expert_placement,
         "expert_to_chiplet": expert_to_chiplet,
         "raw_counts_by_source_expert": raw_counts,
         "kept_counts_by_source_expert": kept_counts,
         "dropped_counts_by_source_expert": dropped_counts,
-        "kept_counts_by_expert": expert_fill,
-        "total_kept_tokens": int(sum(expert_fill)),
+        "kept_counts_by_expert": kept_by_expert,
+        "total_kept_tokens": int(sum(kept_by_expert)),
         "total_dropped_tokens": int(sum(sum(row) for row in dropped_counts)),
         "router_cycles_by_source": {str(k): v for k, v in router_cycles.items()},
         "backend_result_files": {str(k): v for k, v in result_files.items()},
