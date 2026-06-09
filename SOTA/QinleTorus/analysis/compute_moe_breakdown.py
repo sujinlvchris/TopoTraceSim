@@ -87,7 +87,7 @@ def max_dim_busy_cycles(metrics: dict[str, Any]) -> float:
     return max(float(value) for value in busy.values())
 
 
-def ideal_noi_parallel_links(metrics: dict[str, Any]) -> int:
+def communication_parallel_links(metrics: dict[str, Any]) -> int:
     geom = metrics.get("geom", {})
     dims = int(geom.get("dims", 1))
     ary = int(geom.get("ary", 1))
@@ -98,8 +98,8 @@ def max_payload_serial_cycles(rows: list[dict[str, str]]) -> int:
     return max(int(row["flits_per_chunk"]) for row in rows)
 
 
-def ideal_noi_transfer_cycles(rows: list[dict[str, str]], metrics: dict[str, Any]) -> int:
-    """Lower bound for NoI transfer under perfect link balancing.
+def communication_noi_transfer_cycles(rows: list[dict[str, str]], metrics: dict[str, Any]) -> int:
+    """NoI data-transfer component before congestion is charged.
 
     PopNet measures the actual A2A network window after routing, arbitration,
     queueing, and link conflicts.  For the breakdown we need a communication
@@ -114,7 +114,7 @@ def ideal_noi_transfer_cycles(rows: list[dict[str, str]], metrics: dict[str, Any
     if total_flits <= 0:
         total_flits = sum(int(row["flits_per_chunk"]) for row in rows)
 
-    parallel_links = ideal_noi_parallel_links(metrics)
+    parallel_links = communication_parallel_links(metrics)
     balanced_transfer = math.ceil(total_flits / parallel_links)
     serialization_floor = max_payload_serial_cycles(rows)
     return max(balanced_transfer, serialization_floor)
@@ -162,16 +162,16 @@ def main() -> None:
         network_window_time = float(metrics["metrics"]["a2a_latency_cycles"])
 
     measured_network_service_time = max_dim_busy_cycles(metrics)
-    ideal_network_time = ideal_noi_transfer_cycles(rows, metrics)
-    congestion_extra = max(0.0, network_window_time - ideal_network_time)
-    ideal_communication_time = (
+    communication_network_time = communication_noi_transfer_cycles(rows, metrics)
+    congestion_extra = max(0.0, network_window_time - communication_network_time)
+    communication_time = (
         injection_wait
-        + ideal_network_time
+        + communication_network_time
         + hbm_side_wait
         + ejection_wait
     )
     congestion_time = reconfig_wait + barrier_wait + congestion_extra
-    total_time = compute_time + ideal_communication_time + congestion_time
+    total_time = compute_time + communication_time + congestion_time
 
     breakdown = {
         "experiment": {
@@ -189,19 +189,19 @@ def main() -> None:
             "send_bytes_by_source": send_bytes,
             "recv_bytes_by_destination": recv_bytes,
             "d2d_bytes_per_cycle_per_compute_chiplet": bytes_per_cycle,
-            "ideal_noi_parallel_links": ideal_noi_parallel_links(metrics),
+            "communication_parallel_links": communication_parallel_links(metrics),
             "noi_wait_source": args.noi_wait_source,
             "breakdown_definition": (
-                "Ideal Communication Time = injection + ideal NoI transfer lower bound "
+                "Communication Time = injection + NoI data transfer lower bound "
                 "+ HBM-side transfer + ejection; Congestion Time = measured A2A "
-                "network window - ideal NoI transfer lower bound + control waits."
+                "network window - NoI data transfer lower bound + control waits."
             ),
         },
         "popnet": metrics["popnet"],
         "detailed_components_cycles": {
             "Reconfiguration Control": reconfig_wait,
             "Injection Transfer": injection_wait,
-            "Ideal NoI Transfer": ideal_network_time,
+            "NoI Data Transfer": communication_network_time,
             "HBM-Side Transfer": hbm_side_wait,
             "Ejection Transfer": ejection_wait,
             "Barrier Control": barrier_wait,
@@ -212,7 +212,7 @@ def main() -> None:
         "breakdown_cycles": {
             "A2A End-to-End Time": total_time,
             "Compute Time": compute_time,
-            "Ideal Communication Time": ideal_communication_time,
+            "Communication Time": communication_time,
             "Congestion Time": congestion_time,
         },
         "breakdown_us": {
@@ -220,7 +220,7 @@ def main() -> None:
             for key, value in {
                 "A2A End-to-End Time": total_time,
                 "Compute Time": compute_time,
-                "Ideal Communication Time": ideal_communication_time,
+                "Communication Time": communication_time,
                 "Congestion Time": congestion_time,
             }.items()
         },
@@ -229,7 +229,7 @@ def main() -> None:
             for key, value in {
                 "Reconfiguration Control": reconfig_wait,
                 "Injection Transfer": injection_wait,
-                "Ideal NoI Transfer": ideal_network_time,
+                "NoI Data Transfer": communication_network_time,
                 "HBM-Side Transfer": hbm_side_wait,
                 "Ejection Transfer": ejection_wait,
                 "Barrier Control": barrier_wait,
@@ -248,7 +248,7 @@ def main() -> None:
     u = breakdown["breakdown_us"]
     print(f"A2A End-to-End Time: {c['A2A End-to-End Time']:.0f} cycles ~= {u['A2A End-to-End Time']:.3f} us")
     print(f"├── Compute Time: {c['Compute Time']:.0f} cycles ~= {u['Compute Time']:.3f} us")
-    print(f"├── Ideal Communication Time: {c['Ideal Communication Time']:.0f} cycles ~= {u['Ideal Communication Time']:.3f} us")
+    print(f"├── Communication Time: {c['Communication Time']:.0f} cycles ~= {u['Communication Time']:.3f} us")
     print(f"└── Congestion Time: {c['Congestion Time']:.0f} cycles ~= {u['Congestion Time']:.3f} us")
     print(f"wrote breakdown -> {out_path}")
 
