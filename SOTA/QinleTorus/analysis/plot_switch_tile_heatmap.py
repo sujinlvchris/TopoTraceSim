@@ -18,6 +18,44 @@ def chiplet_origin(chiplet_id: int, chiplet_cols: int, tile_rows: int, tile_cols
     return chiplet_row * tile_rows, chiplet_col * tile_cols
 
 
+def parse_tile(spec: str) -> tuple[int, int]:
+    row, col = spec.split(",")
+    return int(row), int(col)
+
+
+def router_global_tile(
+    chiplet_id: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+    router_local_tile: tuple[int, int],
+) -> tuple[int, int]:
+    base_r, base_c = chiplet_origin(chiplet_id, chiplet_cols, tile_rows, tile_cols)
+    return base_r + router_local_tile[0], base_c + router_local_tile[1]
+
+
+def xy_path(src: tuple[int, int], dst: tuple[int, int]) -> list[tuple[int, int]]:
+    """Tile-level XY path from src to dst, including both endpoints."""
+    sr, sc = src
+    dr, dc = dst
+    path = [(sr, sc)]
+
+    step_c = 1 if dc >= sc else -1
+    for col in range(sc + step_c, dc + step_c, step_c):
+        path.append((sr, col))
+
+    step_r = 1 if dr >= sr else -1
+    for row in range(sr + step_r, dr + step_r, step_r):
+        path.append((row, dc))
+
+    return path
+
+
+def add_path(matrix: np.ndarray, path: list[tuple[int, int]], weight: float) -> None:
+    for row, col in path:
+        matrix[row, col] += weight
+
+
 def build_matrices_from_counts(
     routes: dict,
     chiplet_rows: int,
@@ -54,7 +92,7 @@ def build_matrices_from_counts(
     return intra + inter, intra, inter
 
 
-def build_matrices_from_token_routes(
+def build_destination_matrices_from_token_routes(
     routes: dict,
     chiplet_rows: int,
     chiplet_cols: int,
@@ -77,6 +115,44 @@ def build_matrices_from_token_routes(
             intra[row, col] += intra_chiplet_weight
         else:
             inter[row, col] += inter_chiplet_weight
+
+    return intra + inter, intra, inter
+
+
+def build_activity_matrices_from_token_routes(
+    routes: dict,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+    intra_chiplet_weight: float,
+    inter_chiplet_weight: float,
+    router_local_tile: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    height = chiplet_rows * tile_rows
+    width = chiplet_cols * tile_cols
+    intra = np.zeros((height, width), dtype=float)
+    inter = np.zeros((height, width), dtype=float)
+
+    for item in routes["token_routes"]:
+        if not item["kept"]:
+            continue
+
+        src_chiplet = int(item["src_chiplet"])
+        dst_chiplet = int(item["dst_chiplet"])
+        src_tile = (int(item["src_global_row"]), int(item["src_global_col"]))
+        dst_tile = (int(item["dst_global_row"]), int(item["dst_global_col"]))
+        src_router = router_global_tile(src_chiplet, chiplet_cols, tile_rows, tile_cols, router_local_tile)
+
+        if item["is_intra_chiplet"]:
+            add_path(intra, xy_path(src_tile, src_router), intra_chiplet_weight)
+            add_path(intra, xy_path(src_router, dst_tile), intra_chiplet_weight)
+        else:
+            dst_router = router_global_tile(dst_chiplet, chiplet_cols, tile_rows, tile_cols, router_local_tile)
+            add_path(inter, xy_path(src_tile, src_router), intra_chiplet_weight)
+            inter[src_router] += inter_chiplet_weight
+            inter[dst_router] += inter_chiplet_weight
+            add_path(inter, xy_path(dst_router, dst_tile), intra_chiplet_weight)
 
     return intra + inter, intra, inter
 
@@ -173,22 +249,36 @@ def main() -> None:
     parser.add_argument("--tile-cols", type=int, default=4)
     parser.add_argument("--intra-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
+    parser.add_argument("--load-model", choices=["activity", "destination"], default="activity")
+    parser.add_argument("--router-local-tile", default="1,1")
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
-    parser.add_argument("--unit-label", default="tokens")
+    parser.add_argument("--unit-label", default="tile activity")
     parser.add_argument("--color-gamma", type=float, default=0.75)
     args = parser.parse_args()
 
     routes = json.loads(Path(args.routes_json).read_text())
     if "token_routes" in routes:
-        matrices = build_matrices_from_token_routes(
-            routes=routes,
-            chiplet_rows=args.chiplet_rows,
-            chiplet_cols=args.chiplet_cols,
-            tile_rows=args.tile_rows,
-            tile_cols=args.tile_cols,
-            intra_chiplet_weight=args.intra_chiplet_weight,
-            inter_chiplet_weight=args.inter_chiplet_weight,
-        )
+        if args.load_model == "activity":
+            matrices = build_activity_matrices_from_token_routes(
+                routes=routes,
+                chiplet_rows=args.chiplet_rows,
+                chiplet_cols=args.chiplet_cols,
+                tile_rows=args.tile_rows,
+                tile_cols=args.tile_cols,
+                intra_chiplet_weight=args.intra_chiplet_weight,
+                inter_chiplet_weight=args.inter_chiplet_weight,
+                router_local_tile=parse_tile(args.router_local_tile),
+            )
+        else:
+            matrices = build_destination_matrices_from_token_routes(
+                routes=routes,
+                chiplet_rows=args.chiplet_rows,
+                chiplet_cols=args.chiplet_cols,
+                tile_rows=args.tile_rows,
+                tile_cols=args.tile_cols,
+                intra_chiplet_weight=args.intra_chiplet_weight,
+                inter_chiplet_weight=args.inter_chiplet_weight,
+            )
     else:
         matrices = build_matrices_from_counts(
             routes=routes,
@@ -215,6 +305,8 @@ def main() -> None:
     if args.matrix_out:
         names = ["total", "intra", "inter"]
         payload = {
+            "load_model": args.load_model,
+            "router_local_tile": args.router_local_tile,
             "intra_chiplet_weight": args.intra_chiplet_weight,
             "inter_chiplet_weight": args.inter_chiplet_weight,
             "matrices": {name: matrix.tolist() for name, matrix in zip(names, matrices)},
