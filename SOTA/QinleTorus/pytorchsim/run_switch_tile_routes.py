@@ -39,6 +39,7 @@ def build_token_routes(
     experts_per_chiplet = num_experts // nodes
     tiles_per_chiplet = tile_rows * tile_cols
     expert_fill = [0 for _ in range(num_experts)]
+    expert_priority_by_source = [[0 for _ in range(num_experts)] for _ in range(nodes)]
     raw_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
     kept_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
     dropped_counts = [[0 for _ in range(num_experts)] for _ in range(nodes)]
@@ -49,6 +50,7 @@ def build_token_routes(
             expert_id = int(assignments[src_chiplet, token_id])
             dst_chiplet = expert_id // experts_per_chiplet
             raw_counts[src_chiplet][expert_id] += 1
+            expert_priority_by_source[src_chiplet][expert_id] += 1
 
             src_tile_id = token_id % tiles_per_chiplet
             src_global_r, src_global_c = global_tile(
@@ -59,7 +61,10 @@ def build_token_routes(
                 tile_cols,
             )
 
-            kept = expert_capacity <= 0 or expert_fill[expert_id] < expert_capacity
+            kept = (
+                expert_capacity <= 0
+                or expert_priority_by_source[src_chiplet][expert_id] <= expert_capacity
+            )
             dst_tile_id = None
             dst_global_r = None
             dst_global_c = None
@@ -98,6 +103,7 @@ def build_token_routes(
         "tokens_per_source": tokens_per_source,
         "num_experts": num_experts,
         "expert_capacity": expert_capacity,
+        "capacity_semantics": "per_source_group",
         "experts_per_chiplet": experts_per_chiplet,
         "tile_rows_per_chiplet": tile_rows,
         "tile_cols_per_chiplet": tile_cols,
