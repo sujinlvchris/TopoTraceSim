@@ -211,14 +211,21 @@ def draw_chiplet_grid(ax, chiplet_rows: int, chiplet_cols: int, tile_rows: int, 
         )
 
 
-def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize) -> None:
+def text_color_for_background(value: float, norm: colors.Normalize, cmap: str) -> str:
+    rgba = plt.get_cmap(cmap)(norm(value))
+    red, green, blue = rgba[:3]
+    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    return "black" if luminance >= 0.55 else "white"
+
+
+def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize, cmap: str) -> None:
     for row in range(data.shape[0]):
         for col in range(data.shape[1]):
             value = data[row, col]
             if value <= 0:
                 continue
             label = f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
-            text_color = "black" if norm(value) > 0.38 else "white"
+            text_color = text_color_for_background(value, norm, cmap)
             ax.text(col, row, label, ha="center", va="center", fontsize=7, color=text_color)
 
 
@@ -279,7 +286,7 @@ def draw_expert_grid(
     for row in range(rows):
         for col in range(cols):
             value = expert_matrix[row, col]
-            text_color = "black" if norm(value) > 0.62 else "white"
+            text_color = text_color_for_background(value, norm, "magma")
             ax.text(
                 col,
                 row,
@@ -425,7 +432,7 @@ def plot_heatmaps(
         ax.set_xlabel("global tile col")
         ax.set_ylabel("global tile row")
         draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
-        annotate_nonzero(ax, data, norm)
+        annotate_nonzero(ax, data, norm, cmap)
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
         cbar.set_label(unit_label, fontsize=8)
         cbar.ax.tick_params(labelsize=8)
