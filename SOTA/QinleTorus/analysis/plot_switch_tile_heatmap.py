@@ -335,8 +335,9 @@ def draw_activity_grid(
     router_local_tile: tuple[int, int],
     figure_unit: str,
     color_gamma: float,
+    cmap: str,
 ) -> None:
-    im = ax.imshow(data, cmap="viridis", norm=panel_norm(data, color_gamma))
+    im = ax.imshow(data, cmap=cmap, norm=panel_norm(data, color_gamma))
     ax.set_title("Tile path activity", fontsize=12)
     ax.set_xlabel("global tile col")
     ax.set_ylabel("global tile row")
@@ -359,6 +360,7 @@ def plot_expert_activity(
     figure_title: str,
     unit_label: str,
     color_gamma: float,
+    cmap: str,
 ) -> None:
     fig, axes = plt.subplots(
         1,
@@ -379,6 +381,7 @@ def plot_expert_activity(
         router_local_tile,
         unit_label,
         color_gamma,
+        cmap,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=240)
@@ -395,6 +398,7 @@ def plot_heatmaps(
     figure_title: str,
     unit_label: str,
     color_gamma: float,
+    cmap: str,
 ) -> None:
     titles = ["Total load", "Intra-chiplet load", "Inter-chiplet load"]
 
@@ -402,7 +406,7 @@ def plot_heatmaps(
     fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
         norm = panel_norm(data, color_gamma)
-        im = ax.imshow(data, cmap="viridis", norm=norm)
+        im = ax.imshow(data, cmap=cmap, norm=norm)
         ax.set_title(title, fontsize=12)
         ax.set_xlabel("global tile col")
         ax.set_ylabel("global tile row")
@@ -434,6 +438,7 @@ def main() -> None:
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
     parser.add_argument("--unit-label", default="tile activity")
     parser.add_argument("--color-gamma", type=float, default=0.75)
+    parser.add_argument("--cmap", default="magma")
     args = parser.parse_args()
 
     routes = json.loads(Path(args.routes_json).read_text())
@@ -492,6 +497,7 @@ def main() -> None:
             figure_title=args.figure_title,
             unit_label=args.unit_label,
             color_gamma=args.color_gamma,
+            cmap=args.cmap,
         )
     else:
         plot_heatmaps(
@@ -504,6 +510,7 @@ def main() -> None:
             figure_title=args.figure_title,
             unit_label=args.unit_label,
             color_gamma=args.color_gamma,
+            cmap=args.cmap,
         )
 
     if args.matrix_out:
@@ -514,6 +521,7 @@ def main() -> None:
             "intra_chiplet_weight": args.intra_chiplet_weight,
             "inter_chiplet_weight": args.inter_chiplet_weight,
             "layout": args.layout,
+            "cmap": args.cmap,
             "expert_matrix": expert_matrix.tolist() if expert_matrix is not None else None,
             "matrices": {name: matrix.tolist() for name, matrix in zip(names, matrices)},
         }
