@@ -426,7 +426,7 @@ def main() -> None:
     parser.add_argument("--tile-cols", type=int, default=4)
     parser.add_argument("--intra-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
-    parser.add_argument("--layout", choices=["expert-activity", "three-subfig"], default="expert-activity")
+    parser.add_argument("--layout", choices=["three-subfig", "expert-activity"], default="three-subfig")
     parser.add_argument("--load-model", choices=["activity", "destination"], default="activity")
     parser.add_argument("--router-local-tile", default="3,3")
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
