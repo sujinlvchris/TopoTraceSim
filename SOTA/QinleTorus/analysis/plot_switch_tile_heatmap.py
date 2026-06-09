@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Plot tile-level Switch MoE load heatmaps with chiplet boundaries."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def chiplet_origin(chiplet_id: int, chiplet_cols: int, tile_rows: int, tile_cols: int) -> tuple[int, int]:
+    chiplet_row = chiplet_id // chiplet_cols
+    chiplet_col = chiplet_id % chiplet_cols
+    return chiplet_row * tile_rows, chiplet_col * tile_cols
+
+
+def build_matrices_from_counts(
+    routes: dict,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    counts = routes["kept_counts_by_source_expert"]
+    nodes = int(routes["nodes"])
+    num_experts = int(routes["num_experts"])
+    experts_per_chiplet = num_experts // nodes
+
+    height = chiplet_rows * tile_rows
+    width = chiplet_cols * tile_cols
+    intra = np.zeros((height, width), dtype=float)
+    inter = np.zeros((height, width), dtype=float)
+
+    for src_chiplet, row in enumerate(counts):
+        for expert_id, tokens in enumerate(row):
+            dst_chiplet = expert_id // experts_per_chiplet
+            base_r, base_c = chiplet_origin(dst_chiplet, chiplet_cols, tile_rows, tile_cols)
+            per_tile_tokens = float(tokens) / float(tile_rows * tile_cols)
+
+            if src_chiplet == dst_chiplet:
+                target = intra
+            else:
+                target = inter
+
+            target[base_r:base_r + tile_rows, base_c:base_c + tile_cols] += per_tile_tokens
+
+    return intra + inter, intra, inter
+
+
+def build_matrices_from_token_routes(
+    routes: dict,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    height = chiplet_rows * tile_rows
+    width = chiplet_cols * tile_cols
+    intra = np.zeros((height, width), dtype=float)
+    inter = np.zeros((height, width), dtype=float)
+
+    for item in routes["token_routes"]:
+        if not item["kept"]:
+            continue
+        row = int(item["dst_global_row"])
+        col = int(item["dst_global_col"])
+        if item["is_intra_chiplet"]:
+            intra[row, col] += 1.0
+        else:
+            inter[row, col] += 1.0
+
+    return intra + inter, intra, inter
+
+
+def draw_chiplet_grid(ax, chiplet_rows: int, chiplet_cols: int, tile_rows: int, tile_cols: int) -> None:
+    height = chiplet_rows * tile_rows
+    width = chiplet_cols * tile_cols
+
+    ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=0.8)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    for x in range(tile_cols, width, tile_cols):
+        ax.axvline(x - 0.5, color="black", linewidth=2.2)
+    for y in range(tile_rows, height, tile_rows):
+        ax.axhline(y - 0.5, color="black", linewidth=2.2)
+
+    for chiplet_id in range(chiplet_rows * chiplet_cols):
+        base_r, base_c = chiplet_origin(chiplet_id, chiplet_cols, tile_rows, tile_cols)
+        ax.text(
+            base_c + 0.15,
+            base_r + 0.25,
+            f"C{chiplet_id}",
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="black",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.7, "pad": 1.5},
+        )
+
+
+def annotate_nonzero(ax, data: np.ndarray) -> None:
+    for row in range(data.shape[0]):
+        for col in range(data.shape[1]):
+            value = data[row, col]
+            if value <= 0:
+                continue
+            label = f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
+            ax.text(col, row, label, ha="center", va="center", fontsize=7, color="black")
+
+
+def plot_heatmaps(
+    matrices: tuple[np.ndarray, np.ndarray, np.ndarray],
+    out_path: Path,
+    chiplet_rows: int,
+    chiplet_cols: int,
+    tile_rows: int,
+    tile_cols: int,
+) -> None:
+    titles = ["Total routed tokens", "Intra-chiplet tokens", "Inter-chiplet tokens"]
+    vmax = max(float(matrix.max()) for matrix in matrices)
+    vmax = vmax if vmax > 0 else 1.0
+
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
+    for ax, data, title in zip(axes, matrices, titles):
+        im = ax.imshow(data, cmap="YlGnBu", vmin=0, vmax=vmax)
+        ax.set_title(title, fontsize=12)
+        ax.set_xlabel("global tile col")
+        ax.set_ylabel("global tile row")
+        draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
+        annotate_nonzero(ax, data)
+
+    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, label="tokens")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220)
+    plt.close(fig)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Plot 2x2 chiplet / 4x4 tile Switch MoE heatmaps.")
+    parser.add_argument("--routes-json", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--matrix-out", default="")
+    parser.add_argument("--chiplet-rows", type=int, default=2)
+    parser.add_argument("--chiplet-cols", type=int, default=2)
+    parser.add_argument("--tile-rows", type=int, default=4)
+    parser.add_argument("--tile-cols", type=int, default=4)
+    args = parser.parse_args()
+
+    routes = json.loads(Path(args.routes_json).read_text())
+    if "token_routes" in routes:
+        matrices = build_matrices_from_token_routes(
+            routes=routes,
+            chiplet_rows=args.chiplet_rows,
+            chiplet_cols=args.chiplet_cols,
+            tile_rows=args.tile_rows,
+            tile_cols=args.tile_cols,
+        )
+    else:
+        matrices = build_matrices_from_counts(
+            routes=routes,
+            chiplet_rows=args.chiplet_rows,
+            chiplet_cols=args.chiplet_cols,
+            tile_rows=args.tile_rows,
+            tile_cols=args.tile_cols,
+        )
+
+    plot_heatmaps(
+        matrices=matrices,
+        out_path=Path(args.out),
+        chiplet_rows=args.chiplet_rows,
+        chiplet_cols=args.chiplet_cols,
+        tile_rows=args.tile_rows,
+        tile_cols=args.tile_cols,
+    )
+
+    if args.matrix_out:
+        names = ["total", "intra", "inter"]
+        payload = {name: matrix.tolist() for name, matrix in zip(names, matrices)}
+        Path(args.matrix_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.matrix_out).write_text(json.dumps(payload, indent=2))
+
+    print(f"wrote heatmap -> {args.out}")
+    if args.matrix_out:
+        print(f"wrote matrices -> {args.matrix_out}")
+
+
+if __name__ == "__main__":
+    main()
