@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -118,6 +119,18 @@ def annotate_nonzero(ax, data: np.ndarray) -> None:
             ax.text(col, row, label, ha="center", va="center", fontsize=7, color="black")
 
 
+def panel_norm(data: np.ndarray, gamma: float) -> colors.Normalize:
+    positive = data[data > 0]
+    if positive.size == 0:
+        return colors.Normalize(vmin=0, vmax=1)
+
+    vmin = float(positive.min())
+    vmax = float(positive.max())
+    if vmax <= vmin:
+        return colors.Normalize(vmin=0, vmax=max(1.0, vmax))
+    return colors.PowerNorm(gamma=gamma, vmin=vmin, vmax=vmax)
+
+
 def plot_heatmaps(
     matrices: tuple[np.ndarray, np.ndarray, np.ndarray],
     out_path: Path,
@@ -127,22 +140,23 @@ def plot_heatmaps(
     tile_cols: int,
     figure_title: str,
     unit_label: str,
+    color_gamma: float,
 ) -> None:
     titles = ["Total load", "Intra-chiplet load", "Inter-chiplet load"]
-    vmax = max(float(matrix.max()) for matrix in matrices)
-    vmax = vmax if vmax > 0 else 1.0
 
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 5.0), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(14.2, 5.0), constrained_layout=True)
     fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
-        im = ax.imshow(data, cmap="YlGnBu", vmin=0, vmax=vmax)
+        im = ax.imshow(data, cmap="viridis", norm=panel_norm(data, color_gamma))
         ax.set_title(title, fontsize=12)
         ax.set_xlabel("global tile col")
         ax.set_ylabel("global tile row")
         draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
         annotate_nonzero(ax, data)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
+        cbar.set_label(unit_label, fontsize=8)
+        cbar.ax.tick_params(labelsize=8)
 
-    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, label=unit_label)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=220)
     plt.close(fig)
@@ -161,6 +175,7 @@ def main() -> None:
     parser.add_argument("--inter-chiplet-weight", type=float, default=1.0)
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
     parser.add_argument("--unit-label", default="tokens")
+    parser.add_argument("--color-gamma", type=float, default=0.75)
     args = parser.parse_args()
 
     routes = json.loads(Path(args.routes_json).read_text())
@@ -194,6 +209,7 @@ def main() -> None:
         tile_cols=args.tile_cols,
         figure_title=args.figure_title,
         unit_label=args.unit_label,
+        color_gamma=args.color_gamma,
     )
 
     if args.matrix_out:
