@@ -211,14 +211,15 @@ def draw_chiplet_grid(ax, chiplet_rows: int, chiplet_cols: int, tile_rows: int, 
         )
 
 
-def annotate_nonzero(ax, data: np.ndarray) -> None:
+def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize) -> None:
     for row in range(data.shape[0]):
         for col in range(data.shape[1]):
             value = data[row, col]
             if value <= 0:
                 continue
             label = f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
-            ax.text(col, row, label, ha="center", va="center", fontsize=7, color="black")
+            text_color = "black" if norm(value) > 0.58 else "white"
+            ax.text(col, row, label, ha="center", va="center", fontsize=7, color=text_color)
 
 
 def fmt_value(value: float) -> str:
@@ -400,12 +401,13 @@ def plot_heatmaps(
     fig, axes = plt.subplots(1, 3, figsize=(14.2, 5.0), constrained_layout=True)
     fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
-        im = ax.imshow(data, cmap="viridis", norm=panel_norm(data, color_gamma))
+        norm = panel_norm(data, color_gamma)
+        im = ax.imshow(data, cmap="viridis", norm=norm)
         ax.set_title(title, fontsize=12)
         ax.set_xlabel("global tile col")
         ax.set_ylabel("global tile row")
         draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
-        annotate_nonzero(ax, data)
+        annotate_nonzero(ax, data, norm)
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
         cbar.set_label(unit_label, fontsize=8)
         cbar.ax.tick_params(labelsize=8)
