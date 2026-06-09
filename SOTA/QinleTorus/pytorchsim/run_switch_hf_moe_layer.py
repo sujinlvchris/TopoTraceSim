@@ -79,10 +79,20 @@ def load_hidden_states(torch: Any, path: Path, nodes: int, tokens_per_source: in
     return hidden[:nodes, :tokens_per_source, :].float().contiguous(), meta
 
 
+def build_expert_to_chiplet(num_experts: int, nodes: int, placement: str) -> list[int]:
+    if placement != "even":
+        raise ValueError(f"unsupported expert placement: {placement}")
+    return [
+        min(nodes - 1, (expert_id * nodes) // num_experts)
+        for expert_id in range(num_experts)
+    ]
+
+
 def build_trace_rows(
     router_cycles: dict[int, int],
     kept_counts: list[list[int]],
     dropped_counts: list[list[int]],
+    expert_to_chiplet: list[int],
     nodes: int,
     dims: int,
     d_model: int,
@@ -93,7 +103,6 @@ def build_trace_rows(
     bytes_per_element: int,
     phases: list[str],
 ) -> list[dict[str, Any]]:
-    experts_per_node = num_experts // nodes
     rows: list[dict[str, Any]] = []
     event_id = 0
     accounted_router: set[int] = set()
@@ -101,7 +110,7 @@ def build_trace_rows(
     for original_src in range(nodes):
         router_done = int(router_cycles[original_src])
         for expert_id in range(num_experts):
-            expert_chiplet = expert_id // experts_per_node
+            expert_chiplet = int(expert_to_chiplet[expert_id])
             token_count = int(kept_counts[original_src][expert_id])
             if token_count <= 0 or expert_chiplet == original_src:
                 continue
@@ -195,6 +204,7 @@ def main() -> None:
     parser.add_argument("--d-ff", type=int, default=3072)
     parser.add_argument("--num-experts", type=int, default=8)
     parser.add_argument("--expert-capacity", type=int, default=64)
+    parser.add_argument("--expert-placement", choices=["even"], default="even")
     parser.add_argument("--flit-size", type=int, default=64)
     parser.add_argument("--bytes-per-element", type=int, default=4)
     parser.add_argument("--phases", default="dispatch,return")
@@ -203,8 +213,11 @@ def main() -> None:
     args = parser.parse_args()
 
     nodes = args.ary ** args.dims
-    if args.num_experts % nodes != 0:
-        raise ValueError("num_experts must be divisible by nodes")
+    expert_to_chiplet = build_expert_to_chiplet(
+        num_experts=args.num_experts,
+        nodes=nodes,
+        placement=args.expert_placement,
+    )
 
     torch, device, _tog_simulator_cls, sim_backend = import_pytorchsim()
     model_dir = Path(args.model_dir)
@@ -247,6 +260,7 @@ def main() -> None:
     print(f"  nodes             : {nodes}")
     print(f"  tokens/source     : {args.tokens_per_source}")
     print(f"  experts/capacity  : {args.num_experts}/{args.expert_capacity}")
+    print(f"  expert placement  : {args.expert_placement} {expert_to_chiplet}")
 
     for src in range(nodes):
         source_tokens_cpu = hidden[src]
@@ -283,6 +297,7 @@ def main() -> None:
         router_cycles=router_cycles,
         kept_counts=kept_counts,
         dropped_counts=dropped_counts,
+        expert_to_chiplet=expert_to_chiplet,
         nodes=nodes,
         dims=args.dims,
         d_model=args.d_model,
@@ -314,6 +329,8 @@ def main() -> None:
         "d_ff": args.d_ff,
         "num_experts": args.num_experts,
         "expert_capacity": args.expert_capacity,
+        "expert_placement": args.expert_placement,
+        "expert_to_chiplet": expert_to_chiplet,
         "raw_counts_by_source_expert": raw_counts,
         "kept_counts_by_source_expert": kept_counts,
         "dropped_counts_by_source_expert": dropped_counts,
