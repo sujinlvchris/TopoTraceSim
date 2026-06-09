@@ -15,7 +15,7 @@ SCHEDULER="dimrotation"
 FLIT_SIZE=64
 CLOCK_GHZ=1.0
 SLACK=0.10
-HARDWARE_CONFIG="/mnt/sdb1/wyf/TopoTraceSim/configs/noi_hbm_reconfigurable.yaml"
+HARDWARE_CONFIG="/mnt/sdb1/wyf/TopoTraceSim/configs/noi_hbm_fixed.yaml"
 POPNET_BIN="${POPNET_BIN:-/mnt/sdb1/wyf/TopoTraceSim/third_party/popnet_anytopo/build/popnet}"
 
 while [[ $# -gt 0 ]]; do

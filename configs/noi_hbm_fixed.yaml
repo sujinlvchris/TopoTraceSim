@@ -1,0 +1,151 @@
+NoI:
+  # NoI 内部互连结构类型。
+  # 该字段描述 NoI 的硬件数据通路形态，不指定具体调度算法。
+  #
+  # 可选值：
+  # runtimeReconfigurableCrossbar:
+  #   表示 NoI 内部使用可在运行时切换连接关系的 crossbar。
+  #
+  # fixedInterconnect:
+  #   表示 NoI 内部使用固定互连结构。
+  #   该模式下互连连接关系在仿真开始后不发生运行时重构。
+  #
+  # 当前文件用于固定互联 NoI 实验。
+  # 因此该字段设置为 fixedInterconnect。
+  interconnectType: fixedInterconnect
+
+  # compute-side NoI 端口数量。
+  # 每个端口连接一个 compute chiplet 侧的 NoI-NI endpoint adapter。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 如果用户未指定，仿真器使用默认值 4。
+  computePorts: 4
+
+  # HBM-side NoI 端口数量。
+  # 每个端口连接一个 HBM-side NoI stop。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 如果用户未指定，仿真器使用默认值 4。
+  hbmPorts: 4
+
+  # NoI 硬件重构的粒度。
+  # collectivePhase 表示 NoI 不在每个 flit 或 packet 上重新配置连接关系，
+  # 而是在 collective phase、MoE layer、A2A step 等阶段边界更新配置。
+  #
+  # 对 fixedInterconnect，该字段可以保留，但不参与运行时重构。
+  # 默认值为 collectivePhase。
+  reconfigurationGranularity: collectivePhase
+
+  # topology generator 生成新连接配置的默认控制延迟。
+  # 该延迟包括根据 traffic matrix、link utilization、HBM queue state 等元数据
+  # 生成 topology mask 或 active connection pattern 的时间。
+  #
+  # 单位为 ns。
+  # 默认值为 1000 ns。
+  topologyGenerationLatencyNs: 1000
+
+  # crossbar 接收新配置并完成连接切换的默认延迟。
+  # 该值只表示配置写入和切换开销，不包含真实数据传输时间。
+  #
+  # 单位为 ns。
+  # 默认值为 50 ns。
+  crossbarConfigurationLatencyNs: 50
+
+  # NoI phase 开始前的默认同步控制延迟。
+  # 可用于表示 READY/START、barrier、phase boundary synchronization 等控制信号开销。
+  #
+  # 单位为 ns。
+  # 默认值为 20 ns。
+  syncBarrierLatencyNs: 20
+
+  # NoI 端口级流控方式。
+  # credit 表示基于 buffer credit 的 backpressure 控制。
+  # 当下游 buffer 空间不足时，上游端口会停止或降低注入速率。
+  #
+  # 该值可由仿真配置或仿真器输入决定。
+  # 默认值为 credit。
+  flowControl: credit
+
+NoINI:
+  # 每个 compute chiplet 暴露给 NoI 的逻辑 endpoint 数量。
+  # 该值决定 compute chiplet 到 NoI 的逻辑接入规模。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 默认值为 1。
+  endpointsPerComputeChiplet: 1
+
+  # NoI-NI 注入侧 buffer 大小。
+  # 该 buffer 位于 compute chiplet traffic 进入 NoI 之前，
+  # 用于吸收片内 NoC 汇聚到 NoI-NI 时产生的短期 burst。
+  #
+  # 单位为 MiB。
+  # 默认值为 1 MiB。
+  injectionBufferMiB: 1
+
+  # NoI-NI 弹出侧 buffer 大小。
+  # 该 buffer 位于 NoI 到 compute chiplet 的返回路径上，
+  # 用于暂存即将送回片内 NoC 或 compute tile 的数据。
+  #
+  # 单位为 MiB。
+  # 默认值为 1 MiB。
+  ejectionBufferMiB: 1
+
+  # 每个 compute chiplet 到 active interposer / NoI port 的 D2D lane 数量。
+  # 这里描述的是 compute-to-interposer 的逻辑 D2D 数据通道数量，
+  # 不逐个建模 hybrid bonding pad。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 默认值为 128。
+  D2DLanes: 128
+
+  # 每条 D2D lane 的数据率。
+  # 该字段用于和 D2DLanes 一起计算 compute chiplet 到 NoI 的原始注入带宽。
+  #
+  # 单位为 GT/s。
+  # 默认值为 64 GT/s。
+  D2DDataRateGTpsPerLane: 64
+
+HBMSide:
+  # HBM stack 数量。
+  # 每个 HBM stack 可以作为一个 memory-side endpoint group 接入 NoI。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 默认值为 4。
+  stackCount: 4
+
+  # 每个 HBM stack 对应的 HBM-side NoI stop 数量。
+  # HBM-side NoI stop 位于 HBM controller / logic die 附近，
+  # 用于连接 HBM memory subsystem 和 interposer-level NoI。
+  #
+  # 该值不应写死，由仿真配置或仿真器输入决定。
+  # 默认值为 1。
+  stopsPerStack: 1
+
+  # 每个 HBM-side NoI stop 的 staging buffer 大小。
+  # 该 buffer 用于 HBM-assisted all-to-all、collective staging、
+  # scheduled redistribution，以及 memory-side 数据暂存。
+  #
+  # 单位为 MiB。
+  # 默认值为 4 MiB。
+  stagingBufferMiB: 4
+
+  # 每个 HBM stack 抽象出的 logical memory-side channel 数量。
+  # 该字段用于建模 HBM-side 并行度和 queue occupancy。
+  #
+  # 单位为 channels。
+  # 默认值为 32。
+  logicalChannelsPerStack: 32
+
+  # 每个 logical memory channel 的宽度。
+  # 与 logicalChannelsPerStack 一起描述 HBM-side I/O 组织。
+  #
+  # 单位为 bit。
+  # 默认值为 64 bit。
+  channelWidthBits: 64
+
+  # 单个 HBM stack 的峰值带宽。
+  # 该字段用于限制 HBM-side endpoint 的最大 memory-side 数据供给或吸收速率。
+  #
+  # 单位为 TB/s。
+  # 默认值为 2.8 TB/s。
+  bandwidthTBpsPerStack: 2.8
