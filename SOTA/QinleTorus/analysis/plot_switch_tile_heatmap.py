@@ -12,6 +12,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def resolve_cmap(cmap: str):
+    if cmap == "softBlueRed":
+        return colors.LinearSegmentedColormap.from_list(
+            "softBlueRed",
+            [
+                (0.00, "#020a3d"),
+                (0.015, "#061c72"),
+                (0.04, "#2452b5"),
+                (0.08, "#85aaf7"),
+                (0.22, "#d8e4ff"),
+                (0.50, "#f8f8f8"),
+                (0.66, "#f6c7bd"),
+                (0.84, "#e45c4f"),
+                (1.00, "#8e001c"),
+            ],
+            N=256,
+        )
+    return plt.get_cmap(cmap)
+
+
 def chiplet_origin(chiplet_id: int, chiplet_cols: int, tile_rows: int, tile_cols: int) -> tuple[int, int]:
     chiplet_row = chiplet_id // chiplet_cols
     chiplet_col = chiplet_id % chiplet_cols
@@ -211,14 +231,15 @@ def draw_chiplet_grid(ax, chiplet_rows: int, chiplet_cols: int, tile_rows: int, 
         )
 
 
-def text_color_for_background(value: float, norm: colors.Normalize, cmap: str) -> str:
-    rgba = plt.get_cmap(cmap)(norm(value))
+def text_color_for_background(value: float, norm: colors.Normalize, cmap) -> str:
+    cmap_obj = resolve_cmap(cmap) if isinstance(cmap, str) else cmap
+    rgba = cmap_obj(norm(value))
     red, green, blue = rgba[:3]
     luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
     return "black" if luminance >= 0.55 else "white"
 
 
-def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize, cmap: str) -> None:
+def annotate_nonzero(ax, data: np.ndarray, norm: colors.Normalize, cmap) -> None:
     for row in range(data.shape[0]):
         for col in range(data.shape[1]):
             value = data[row, col]
@@ -366,7 +387,8 @@ def draw_activity_grid(
     cmap: str,
 ) -> None:
     norm = panel_norm(data, color_gamma, color_scale, hotspot_center_percentile)
-    im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap, norm=norm)
+    cmap_obj = resolve_cmap(cmap)
+    im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap_obj, norm=norm)
     ax.set_title("Tile path activity", fontsize=12)
     ax.set_xlabel("global tile col")
     ax.set_ylabel("global tile row")
@@ -444,17 +466,18 @@ def plot_heatmaps(
     cmap: str,
 ) -> None:
     titles = ["Total load", "Intra-chiplet load", "Inter-chiplet load"]
+    cmap_obj = resolve_cmap(cmap)
 
     fig, axes = plt.subplots(1, 3, figsize=(14.2, 5.0), constrained_layout=True)
     fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
         norm = panel_norm(data, color_gamma, color_scale, hotspot_center_percentile)
-        im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap, norm=norm)
+        im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap_obj, norm=norm)
         ax.set_title(title, fontsize=12)
         ax.set_xlabel("global tile col")
         ax.set_ylabel("global tile row")
         draw_chiplet_grid(ax, chiplet_rows, chiplet_cols, tile_rows, tile_cols)
-        annotate_nonzero(ax, data, norm, cmap)
+        annotate_nonzero(ax, data, norm, cmap_obj)
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.025)
         cbar.set_label(unit_label, fontsize=8)
         cbar.ax.tick_params(labelsize=8)
