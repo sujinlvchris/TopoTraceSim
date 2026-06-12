@@ -233,7 +233,12 @@ def fmt_value(value: float) -> str:
     return f"{value:.1f}" if abs(value - round(value)) > 1e-6 else f"{int(value)}"
 
 
-def panel_norm(data: np.ndarray, gamma: float, color_scale: str) -> colors.Normalize:
+def panel_norm(
+    data: np.ndarray,
+    gamma: float,
+    color_scale: str,
+    hotspot_center_percentile: float,
+) -> colors.Normalize:
     positive = data[data > 0]
     if positive.size == 0:
         return colors.Normalize(vmin=0, vmax=1)
@@ -244,6 +249,10 @@ def panel_norm(data: np.ndarray, gamma: float, color_scale: str) -> colors.Norma
         return colors.Normalize(vmin=0, vmax=max(1.0, vmax))
     if color_scale == "log":
         return colors.LogNorm(vmin=vmin, vmax=vmax)
+    if color_scale == "hotspot":
+        center = float(np.percentile(positive, hotspot_center_percentile))
+        center = max(1e-12, min(center, vmax - 1e-12))
+        return colors.TwoSlopeNorm(vmin=0.0, vcenter=center, vmax=vmax)
     return colors.PowerNorm(gamma=gamma, vmin=vmin, vmax=vmax)
 
 
@@ -260,8 +269,9 @@ def draw_expert_grid(
     figure_unit: str,
     color_gamma: float,
     color_scale: str,
+    hotspot_center_percentile: float,
 ):
-    norm = panel_norm(expert_matrix, color_gamma, color_scale)
+    norm = panel_norm(expert_matrix, color_gamma, color_scale, hotspot_center_percentile)
     im = ax.imshow(panel_image_data(expert_matrix, color_scale), cmap="magma", norm=norm)
     rows, cols = expert_matrix.shape
     experts_per_chiplet = cols // chiplet_cols
@@ -352,9 +362,10 @@ def draw_activity_grid(
     figure_unit: str,
     color_gamma: float,
     color_scale: str,
+    hotspot_center_percentile: float,
     cmap: str,
 ) -> None:
-    norm = panel_norm(data, color_gamma, color_scale)
+    norm = panel_norm(data, color_gamma, color_scale, hotspot_center_percentile)
     im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap, norm=norm)
     ax.set_title("Tile path activity", fontsize=12)
     ax.set_xlabel("global tile col")
@@ -379,6 +390,7 @@ def plot_expert_activity(
     unit_label: str,
     color_gamma: float,
     color_scale: str,
+    hotspot_center_percentile: float,
     cmap: str,
 ) -> None:
     fig, axes = plt.subplots(
@@ -389,7 +401,15 @@ def plot_expert_activity(
         gridspec_kw={"width_ratios": [0.9, 1.35]},
     )
     fig.suptitle(figure_title, fontsize=14)
-    draw_expert_grid(axes[0], expert_matrix, chiplet_cols, unit_label, color_gamma, color_scale)
+    draw_expert_grid(
+        axes[0],
+        expert_matrix,
+        chiplet_cols,
+        unit_label,
+        color_gamma,
+        color_scale,
+        hotspot_center_percentile,
+    )
     draw_activity_grid(
         axes[1],
         activity_matrix,
@@ -401,6 +421,7 @@ def plot_expert_activity(
         unit_label,
         color_gamma,
         color_scale,
+        hotspot_center_percentile,
         cmap,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -419,6 +440,7 @@ def plot_heatmaps(
     unit_label: str,
     color_gamma: float,
     color_scale: str,
+    hotspot_center_percentile: float,
     cmap: str,
 ) -> None:
     titles = ["Total load", "Intra-chiplet load", "Inter-chiplet load"]
@@ -426,7 +448,7 @@ def plot_heatmaps(
     fig, axes = plt.subplots(1, 3, figsize=(14.2, 5.0), constrained_layout=True)
     fig.suptitle(figure_title, fontsize=14)
     for ax, data, title in zip(axes, matrices, titles):
-        norm = panel_norm(data, color_gamma, color_scale)
+        norm = panel_norm(data, color_gamma, color_scale, hotspot_center_percentile)
         im = ax.imshow(panel_image_data(data, color_scale), cmap=cmap, norm=norm)
         ax.set_title(title, fontsize=12)
         ax.set_xlabel("global tile col")
@@ -459,7 +481,8 @@ def main() -> None:
     parser.add_argument("--figure-title", default="Switch MoE tile heatmap")
     parser.add_argument("--unit-label", default="tile activity")
     parser.add_argument("--color-gamma", type=float, default=0.75)
-    parser.add_argument("--color-scale", choices=["power", "log"], default="log")
+    parser.add_argument("--color-scale", choices=["power", "log", "hotspot"], default="log")
+    parser.add_argument("--hotspot-center-percentile", type=float, default=90.0)
     parser.add_argument("--cmap", default="RdBu_r")
     args = parser.parse_args()
 
@@ -520,6 +543,7 @@ def main() -> None:
             unit_label=args.unit_label,
             color_gamma=args.color_gamma,
             color_scale=args.color_scale,
+            hotspot_center_percentile=args.hotspot_center_percentile,
             cmap=args.cmap,
         )
     else:
@@ -534,6 +558,7 @@ def main() -> None:
             unit_label=args.unit_label,
             color_gamma=args.color_gamma,
             color_scale=args.color_scale,
+            hotspot_center_percentile=args.hotspot_center_percentile,
             cmap=args.cmap,
         )
 
@@ -546,6 +571,8 @@ def main() -> None:
             "inter_chiplet_weight": args.inter_chiplet_weight,
             "layout": args.layout,
             "color_scale": args.color_scale,
+            "color_gamma": args.color_gamma,
+            "hotspot_center_percentile": args.hotspot_center_percentile,
             "cmap": args.cmap,
             "expert_matrix": expert_matrix.tolist() if expert_matrix is not None else None,
             "matrices": {name: matrix.tolist() for name, matrix in zip(names, matrices)},
